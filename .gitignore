@@ -146,3 +146,6 @@ vite.config.ts.timestamp-*
 !.vscode/extensions.json
 
 data
+
+configs/*
+!configs/*.example
