@@ -1,0 +1,5 @@
+{
+    "connectionString": "postgres://user:password@127.0.0.1:5432/dbname",
+    "maxWorkersCount": 3,
+    "queueName": "MyQueue"
+}
