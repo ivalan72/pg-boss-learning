@@ -19,9 +19,12 @@ async function readConfig(filename: string): Promise<IConfig> {
     return JSON.parse(content) as IConfig;
 }
 
-async function sendJob(boss: PgBoss, queueName: string, data: object): Promise<string | null> {
+async function sendJob(boss: PgBoss, queueName: string, data: JobData): Promise<string | null> {
     const id = await boss.send(queueName, data);
-    console.log(`created job ${id} in queueName ${queueName} with data ${JSON.stringify(data)}`);
+
+    const { name, timeout } = data;
+    console.log(`created job '${name}' in queueName '${queueName}' (timeout=${timeout}ms)`);
+
     return id;
 }
 
@@ -34,18 +37,16 @@ function getTimeout(): number {
 }
 
 async function doJob(job: PgBoss.Job<JobData>[]) {
-    const { name, timeout } = job[0].data;
+    const { data: { name, timeout }, name: queueName } = job[0];
 
     console.log(
-        `${getTime()}: Job '${name}' started in queueName '${job[0].name}' (timeout=${timeout}ms)`
+        `${getTime()}: Job '${name}' started in queueName '${queueName}' (timeout=${timeout}ms)`
     );
 
-    await new Promise((resolve) => {
-        setTimeout(() => resolve(0), timeout);
-    });
+    await new Promise((resolve) => setTimeout(() => resolve(0), timeout));
 
     console.log(
-        `${getTime()}: Job '${name}' finished in queueName '${job[0].name}' (timeout=${timeout}ms)`
+        `${getTime()}: Job '${name}' finished in queueName '${queueName}' (timeout=${timeout}ms)`
     );
 }
 
@@ -76,13 +77,12 @@ async function main() {
         promises.push(boss.work(queueName, doJob));
     }
 
-    return Promise.all(promises);
+    const workesIds = await Promise.all(promises);
+
+    console.log(`Started ${workesIds.length} worker(s): [${workesIds.join(', ')}]`)
 }
 
 main()
-    .then(() => {
-        console.log('Finished');
-    })
     .catch((error) => {
         console.error(error);
         exit(1);
