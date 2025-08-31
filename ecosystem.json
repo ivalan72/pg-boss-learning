@@ -1,0 +1,9 @@
+{
+  "apps" : [{
+    "name": "pg-boss-workers",
+    "script": "./dist/main.js",
+    "args": "./configs/config.json",
+    "instances": 8,
+    "exec_mode": "cluster"
+  }]
+}
