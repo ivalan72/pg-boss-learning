@@ -1,89 +1,66 @@
-import dayjs from 'dayjs';
-import { readFile } from 'node:fs/promises';
 import { exit } from 'node:process';
 import PgBoss from 'pg-boss';
-
-interface IConfig {
-    queueName: string;
-    connectionString: string;
-    maxWorkersCount?: number;
-}
+import { IConfig } from './config.interface';
+import { Logger } from './logger.service';
+import { readConfig } from './read-config';
 
 interface JobData {
     name: string;
     timeout: number;
 }
 
-async function readConfig(filename: string): Promise<IConfig> {
-    const content = await readFile(filename, { encoding: 'utf-8' });
-    return JSON.parse(content) as IConfig;
-}
+class App {
+    constructor(
+        private config: IConfig,
+        private logger: Logger
+    ) {}
 
-async function sendJob(boss: PgBoss, queueName: string, data: JobData): Promise<string | null> {
-    const id = await boss.send(queueName, data);
+    async run() {
+        const { connectionString, maxWorkersCount = 1, queueName = 'default' } = this.config;
 
-    const { name, timeout } = data;
-    console.log(`created job '${name}' in queueName '${queueName}' (timeout=${timeout}ms)`);
+        const boss = new PgBoss({ connectionString, monitorStateIntervalSeconds: 1 });
 
-    return id;
-}
+        boss.on('error', console.error);
 
-function getTime(): string {
-    return dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss.SSS');
-}
+        await boss.start();
 
-function getTimeout(): number {
-    return 1000 + Math.round(Math.random() * 9000);
-}
+        await boss.createQueue(queueName);
 
-async function doJob(job: PgBoss.Job<JobData>[]) {
-    const { data: { name, timeout }, name: queueName } = job[0];
+        const promises: Promise<string>[] = [];
 
-    console.log(
-        `${getTime()}: Job '${name}' started in queueName '${queueName}' (timeout=${timeout}ms)`
-    );
+        for (let i = 0; i < maxWorkersCount; i++) {
+            promises.push(
+                boss.work(queueName, async (job: PgBoss.Job<JobData>[]) => {
+                    const {
+                        data: { name, timeout },
+                        name: queueName,
+                    } = job[0];
 
-    await new Promise((resolve) => setTimeout(() => resolve(0), timeout));
+                    this.logger.log(
+                        `Job '${name}' started in queueName '${queueName}' (timeout=${timeout}ms)`
+                    );
 
-    console.log(
-        `${getTime()}: Job '${name}' finished in queueName '${queueName}' (timeout=${timeout}ms)`
-    );
-}
+                    await new Promise((resolve) => setTimeout(() => resolve(0), timeout));
 
-async function main() {
-    const {
-        connectionString,
-        maxWorkersCount = 3,
-        queueName = 'default',
-    } = await readConfig(process.argv[2]);
+                    this.logger.log(
+                        `Job '${name}' finished in queueName '${queueName}' (timeout=${timeout}ms)`
+                    );
+                })
+            );
+        }
 
-    const boss = new PgBoss({ connectionString, monitorStateIntervalSeconds: 1 });
+        const workesIds = await Promise.all(promises);
 
-    boss.on('error', console.error);
-
-    await boss.start();
-
-    console.log('PgBoss started');
-
-    await boss.createQueue(queueName);
-
-    for (let i = 1; i <= 20; i++) {
-        await sendJob(boss, queueName, { name: `Job-${i}`, timeout: getTimeout() });
+        this.logger.log(`Started ${workesIds.length} worker(s): [${workesIds.join(', ')}]`);
     }
-
-    const promises: Promise<string>[] = [];
-
-    for (let i = 0; i < maxWorkersCount; i++) {
-        promises.push(boss.work(queueName, doJob));
-    }
-
-    const workesIds = await Promise.all(promises);
-
-    console.log(`Started ${workesIds.length} worker(s): [${workesIds.join(', ')}]`)
 }
 
-main()
-    .catch((error) => {
-        console.error(error);
-        exit(1);
-    });
+(async () => {
+    const config = await readConfig(process.argv[2]);
+    const logger = new Logger({});
+    const app = new App(config, logger);
+    return app.run();
+})().catch((error) => {
+    console.error(error);
+    exit(1);
+});
